@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>persistentNotes</title>
+	<link rel="icon" type="image/png" href="favicon-192.png">
+	<link rel="manifest" href="https://dependentchemical.github.io/persistentNotes/manifest.json">
+    <!-- Supabase Client Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+	<script>
+	  if ('serviceWorker' in navigator) {
+		window.addEventListener('load', () => {
+		  // The scope here should generally match your start_url/scope in the manifest
+		  navigator.serviceWorker.register('https://dependentchemical.github.io/persistentNotes/sw.js', { scope: 'https://dependentchemical.github.io/persistentNotes/' })
+			.then(registration => {
+			  console.log('Service Worker registered: ', registration);
+			})
+			.catch(error => {
+			  console.log('Service Worker registration failed: ', error);
+			});
+		});
+	  }
+	</script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        
+        :root {
+            --background-dark: #121212;
+            --surface-dark: #1e1e1e;
+            --text-light: #e0e0e0;
+            --accent-orange: #ff8c00; /* Bright orange */
+            --bubble-bg: #2c2c2c;
+            --bubble-text: #f5f5f5;
+            --border-color: #333333;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--background-dark);
+            color: var(--text-light);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        header {
+            background-color: var(--surface-dark);
+            padding: 15px 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent-orange);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        #chat-container {
+            flex-grow: 1;
+            max-width: 700px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            /* Newest notes at the bottom */
+            flex-direction: column-reverse; 
+            gap: 10px;
+            /* Scrollbar styling for dark mode */
+            scrollbar-color: var(--accent-orange) var(--surface-dark);
+            scrollbar-width: thin;
+        }
+
+        /* The Note Bubble Content */
+        .note-bubble {
+            background-color: var(--bubble-bg);
+            color: var(--bubble-text);
+            /* Bubble shape updated for chat style (sharp corner bottom-left for right-aligned bubble) */
+            border-radius: 12px 12px 12px 0; 
+            padding: 12px 18px;
+            max-width: 90%;
+            word-wrap: break-word;
+            align-self: flex-end; /* Align right (user notes) */
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+            white-space: pre-wrap; 
+            transition: opacity 0.3s ease, height 0.3s ease, border 0.2s, margin 0.3s;
+            cursor: pointer;
+        }
+        
+        .note-bubble.selected {
+            border: 2px solid var(--accent-orange);
+            background-color: #383838;
+        }
+
+        /* Input area styling */
+        #input-area {
+            background-color: var(--surface-dark);
+            border-top: 1px solid var(--border-color);
+            padding: 15px 20px;
+            display: flex;
+            gap: 10px;
+            max-width: 700px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        #note-input {
+            flex-grow: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: 2px solid var(--border-color);
+            background-color: #252525;
+            color: var(--text-light);
+            resize: none;
+            max-height: 100px;
+            transition: border-color 0.2s;
+        }
+
+        #note-input:focus {
+            outline: none;
+            border-color: var(--accent-orange);
+        }
+
+        #send-btn {
+            background-color: var(--accent-orange);
+            color: var(--surface-dark);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        #send-btn:hover {
+            background-color: #ff9d2e;
+        }
+        #send-btn:active {
+            transform: scale(0.98);
+        }
+
+        /* --- Pagination UI - Placed at the visual top of the column-reverse flow --- */
+        #load-more-container {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+            margin: 10px 0;
+        }
+        #load-more-btn {
+            background-color: var(--bubble-bg);
+            color: var(--text-light);
+            border: 1px solid var(--border-color);
+            padding: 8px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #load-more-btn:hover {
+            background-color: #383838;
+        }
+        #load-more-btn:disabled {
+            cursor: default;
+            background-color: #1e1e1e;
+            color: #666;
+            border-color: #222;
+        }
+        .initial-message {
+             color: #666; 
+             text-align: center; 
+             margin-top: 50px;
+             /* Put initial message at the visual top */
+             align-self: center;
+        }
+
+        /* --- Modal and Message Box Styling (Updated for Padding/Rounding) --- */
+        .modal-overlay, #message-box {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content, #message-box-content {
+            background-color: var(--surface-dark);
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.7);
+            width: 90%;
+            max-width: 400px;
+            color: var(--text-light);
+        }
+        
+        .modal-content h2, #message-box-content h3 {
+            color: var(--accent-orange);
+            margin-top: 0;
+            font-weight: 800;
+        }
+
+        .modal-content label {
+            display: block;
+            margin-top: 15px;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        /* Increased Padding and Rounding for Inputs and Buttons in Modals */
+        .modal-content input, 
+        .modal-content button, 
+        #message-box-content button {
+            width: 100%;
+            padding: 14px; /* Increased padding */
+            box-sizing: border-box;
+            border-radius: 8px; /* Increased rounding */
+            border: 1px solid var(--border-color);
+            background-color: #252525;
+            color: var(--text-light);
+        }
+
+        #save-config-btn, #message-box-close-btn {
+            margin-top: 20px;
+            background-color: var(--accent-orange);
+            color: var(--surface-dark);
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+        }
+        
+        /* Specific Delete Modal Styles */
+        #delete-confirm-modal .modal-content button#confirm-delete-btn {
+            background-color: #dc3545; /* Red for deletion */
+        }
+        #delete-confirm-modal .modal-content button#cancel-delete-btn {
+            background-color: #555;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        persistentNotes
+    </header>
+
+    <!-- Main Chat/Notes Display Area -->
+    <div id="chat-container">
+        <!-- Notes will be dynamically inserted here -->
+        <p class="initial-message">Connecting to Supabase...</p>
+    </div>
+
+    <!-- Fixed Input Area -->
+    <div id="input-area">
+        <textarea id="note-input" placeholder="Write a new note..." rows="1"></textarea>
+        <button id="send-btn" disabled>SEND</button>
+    </div>
+
+    <!-- Custom Modals -->
+    <div id="config-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h2>Supabase Setup</h2>
+            <p>Welcome! Please provide your Supabase connection details to save your notes.</p>
+            
+            <label for="supabase-url">Supabase URL:</label>
+            <input type="text" id="supabase-url" placeholder="https://xyz.supabase.co" required>
+
+            <label for="supabase-anon-key">Anon Key:</label>
+            <input type="text" id="supabase-anon-key" placeholder="Your public anon key" required>
+
+            <label for="supabase-table-name">Table Name:</label>
+            <input type="text" id="supabase-table-name" value="notes" required>
+
+            <button id="save-config-btn">Save and Connect</button>
+        </div>
+    </div>
+    
+    <div id="delete-confirm-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h2>Confirm Deletion</h2>
+            <p>Are you sure you want to delete this note?</p>
+            <p id="delete-note-preview" style="background-color: #252525; padding: 10px; border-radius: 6px; margin-top: 15px; font-style: italic; max-height: 100px; overflow: hidden; white-space: pre-wrap;"></p>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button id="cancel-delete-btn" style="flex-grow: 1;">Cancel</button>
+                <button id="confirm-delete-btn" style="flex-grow: 1;">Delete Note</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="message-box" class="modal-overlay">
+        <div id="message-box-content">
+            <h3>Notification</h3>
+            <p id="message-box-text"></p>
+            <button id="message-box-close-btn">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // --- Global Variables and Constants ---
+        const LS_KEYS = {
+            URL: 'supabase_url',
+            KEY: 'supabase_anon_key',
+            TABLE: 'supabase_table_name'
+        };
+        const MAX_NOTE_LENGTH = 500;
+        
+        // --- Pagination & Long Press Constants/State ---
+        const NOTES_PER_LOAD = 10;
+        const LONG_PRESS_THRESHOLD = 500; // milliseconds
+        const MOVE_THRESHOLD = 10; // pixels
+
+        let supabaseClient = null;
+        let tableName = '';
+        let isSupabaseReady = false;
+        let currentSelectedNote = null;
+        let longPressTimeout; 
+        
+        let totalNoteCount = 0; // Total count of notes in the DB
+        // Tracks how many notes have been loaded starting from the newest (end of table)
+        let notesLoadedFromEnd = 0; 
+        let hasMoreNotes = true; 
+        let isLoading = false; // Prevent double fetching
+
+        // --- DOM Elements ---
+        const chatContainer = document.getElementById('chat-container');
+        const noteInput = document.getElementById('note-input');
+        const sendButton = document.getElementById('send-btn');
+        const configModal = document.getElementById('config-modal');
+        const saveConfigBtn = document.getElementById('save-config-btn');
+        const msgBox = document.getElementById('message-box');
+        const msgBoxText = document.getElementById('message-box-text');
+        const msgBoxCloseBtn = document.getElementById('message-box-close-btn');
+        const deleteConfirmModal = document.getElementById('delete-confirm-modal');
+        const deleteNotePreview = document.getElementById('delete-note-preview');
+        const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+        const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+        
+        // Load More UI Element setup
+        const loadMoreContainer = document.createElement('div');
+        loadMoreContainer.id = 'load-more-container';
+        loadMoreContainer.innerHTML = '<button id="load-more-btn" disabled>Loading...</button>';
+        const loadMoreBtn = loadMoreContainer.querySelector('#load-more-btn');
+        loadMoreBtn.addEventListener('click', () => loadNotes(true));
+
+
+        // --- Utility Functions ---
+
+        /** Shows a custom message box (replaces alert()). */
+        function showMessage(message) {
+            msgBoxText.textContent = message;
+            msgBox.style.display = 'flex';
+        }
+
+        /** Hides the custom message box. */
+        function hideMessage() {
+            msgBox.style.display = 'none';
+        }
+        
+        /** Clears the selected state from all notes. */
+        function clearSelection() {
+            document.querySelectorAll('.note-bubble.selected').forEach(el => {
+                el.classList.remove('selected');
+            });
+            currentSelectedNote = null;
+        }
+
+        /** Updates the Load More Button state and text. */
+        function updateLoadMoreButton(state = 'idle') {
+            loadMoreBtn.disabled = true;
+
+            if (state === 'loading') {
+                loadMoreBtn.textContent = 'Loading Older Notes...';
+            } else if (!hasMoreNotes) {
+                loadMoreBtn.textContent = `All ${totalNoteCount} Notes Loaded`;
+            } else {
+                const remaining = totalNoteCount - notesLoadedFromEnd;
+                const nextLoad = Math.min(NOTES_PER_LOAD, remaining);
+                loadMoreBtn.textContent = `Load Older Notes (${nextLoad})`;
+                loadMoreBtn.disabled = isLoading || remaining <= 0;
+            }
+        }
+        
+        // --- Gesture Logic for Long Press ---
+        
+        function startPress(e) {
+            if (e.type === 'touchstart') {
+                e.preventDefault(); 
+            }
+            
+            const noteElement = e.currentTarget;
+            
+            clearTimeout(longPressTimeout);
+            
+            const startX = e.type.startsWith('touch') ? e.touches[0].clientX : e.clientX;
+            const startY = e.type.startsWith('touch') ? e.touches[0].clientY : e.clientY;
+
+            longPressTimeout = setTimeout(() => {
+                handleLongPress(noteElement);
+            }, LONG_PRESS_THRESHOLD);
+
+            noteElement.dataset.startX = startX;
+            noteElement.dataset.startY = startY;
+            noteElement.dataset.isPressed = 'true';
+        }
+
+        function cancelPress(e) {
+            clearTimeout(longPressTimeout);
+            if (e.currentTarget) {
+                 e.currentTarget.dataset.isPressed = 'false';
+            }
+        }
+        
+        function checkMove(e) {
+            if (e.currentTarget.dataset.isPressed !== 'true') return;
+
+            const isTouch = e.type.startsWith('touch');
+            let currentX, currentY;
+            
+            if (isTouch) {
+                if (e.touches.length === 0) {
+                    cancelPress(e);
+                    return;
+                }
+                currentX = e.touches[0].clientX;
+                currentY = e.touches[0].clientY;
+            } else {
+                currentX = e.clientX;
+                currentY = e.clientY;
+            }
+
+            const startX = parseFloat(e.currentTarget.dataset.startX);
+            const startY = parseFloat(e.currentTarget.dataset.startY);
+
+            const deltaX = Math.abs(currentX - startX);
+            const deltaY = Math.abs(currentY - startY);
+
+            if (deltaX > MOVE_THRESHOLD || deltaY > MOVE_THRESHOLD) {
+                cancelPress(e);
+            }
+        }
+
+        function handleLongPress(noteElement) {
+            if (!noteElement) return;
+
+            clearSelection();
+
+            // 1. Select the note (Visual change)
+            noteElement.classList.add('selected');
+            currentSelectedNote = {
+                id: noteElement.dataset.id,
+                message: noteElement.textContent
+            };
+
+            // 2. Scroll to top/into view
+            setTimeout(() => {
+                // block: 'start' is fine since we want the bubble to be visible at the top of the container
+                noteElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+
+            // 3. Show Delete Modal
+            showDeleteConfirmModal(currentSelectedNote.message);
+
+            noteElement.dataset.isPressed = 'false';
+        }
+
+        function showDeleteConfirmModal(message) {
+            deleteNotePreview.textContent = message;
+            deleteConfirmModal.style.display = 'flex';
+        }
+        
+        /** Creates a complete note bubble DOM element and attaches gesture listeners. */
+        function createNoteItem(message, id) {
+            const bubble = document.createElement('div');
+            bubble.classList.add('note-bubble');
+            bubble.textContent = message;
+            bubble.dataset.id = id;
+            bubble.dataset.isPressed = 'false';
+            
+            // Attach long press listeners
+            bubble.addEventListener('mousedown', startPress);
+            bubble.addEventListener('touchstart', startPress);
+            bubble.addEventListener('mouseup', cancelPress);
+            bubble.addEventListener('touchend', cancelPress);
+            bubble.addEventListener('mousemove', checkMove);
+            bubble.addEventListener('touchmove', checkMove);
+            bubble.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            return bubble;
+        }
+
+        // --- Supabase Interaction Logic ---
+
+        /** Initializes the Supabase client. */
+        function initializeSupabase(url, key, table) {
+            try {
+                supabaseClient = supabase.createClient(url, key);
+                tableName = table;
+                isSupabaseReady = true;
+                sendButton.disabled = false;
+                console.log('Supabase client initialized successfully!');
+                
+                // Start the lazy loading process
+                loadNotes(false); 
+                return true;
+            } catch (error) {
+                console.error('Error creating Supabase client:', error);
+                showMessage(`Could not connect to Supabase. Error: ${error.message}`);
+                return false;
+            }
+        }
+
+        /** Checks localStorage for credentials and either connects or shows the modal. */
+        function getSupabaseCredentials() {
+            const url = localStorage.getItem(LS_KEYS.URL);
+            const key = localStorage.getItem(LS_KEYS.KEY);
+            const table = localStorage.getItem(LS_KEYS.TABLE);
+
+            if (url) document.getElementById('supabase-url').value = url;
+            if (key) document.getElementById('supabase-anon-key').value = key;
+            if (table) document.getElementById('supabase-table-name').value = table;
+
+
+            if (!url || !key || !table) {
+                configModal.style.display = 'flex';
+            } else {
+                const success = initializeSupabase(url, key, table);
+                if (!success) {
+                     configModal.style.display = 'flex';
+                }
+            }
+        }
+
+        /** Core function to fetch notes with pagination logic (Newest at bottom - chat style). */
+        async function loadNotes(isLoadMore) {
+            if (isLoading || !isSupabaseReady) return;
+
+            isLoading = true;
+            updateLoadMoreButton('loading');
+            
+            // 1. Get total count
+            const { count: totalCountQuery, error: countError } = await supabaseClient
+                .from(tableName)
+                .select('*', { count: 'exact', head: true }); 
+            
+            if (countError) {
+                console.error('Error fetching total count:', countError);
+                showMessage(`Error loading notes count: ${countError.message}`);
+                isLoading = false;
+                updateLoadMoreButton();
+                return;
+            }
+            
+            totalNoteCount = totalCountQuery;
+
+            if (totalNoteCount === 0) {
+                chatContainer.innerHTML = '<p class="initial-message">Start chatting! Your notes will appear here.</p>';
+                isLoading = false;
+                updateLoadMoreButton();
+                return;
+            }
+            
+            let start, end;
+            const limit = NOTES_PER_LOAD;
+            let previousScrollHeight = 0;
+            let previousScrollTop = 0; // Stored previous scroll position for stabilization
+
+            if (!isLoadMore) {
+                // Initial Load: Calculate range to get the last 'limit' notes (newest)
+                start = Math.max(0, totalNoteCount - limit);
+                end = totalNoteCount - 1; 
+                notesLoadedFromEnd = 0; // Reset before fetch/render
+                
+                // Clear and setup DOM structure for the initial load
+                chatContainer.innerHTML = '';
+                // Append Load More button LAST in the DOM (it will appear at the visual TOP due to column-reverse)
+                chatContainer.appendChild(loadMoreContainer); 
+                
+            } else {
+                // Load More: Fetch the batch BEFORE the current oldest note
+                
+                // Index of the oldest note already loaded (e.g., if total=30, loaded=10, the oldest index is 20)
+                const currentOldestIndex = totalNoteCount - notesLoadedFromEnd; 
+                
+                // Check if we've loaded everything
+                if (currentOldestIndex <= 0) {
+                    hasMoreNotes = false;
+                    isLoading = false;
+                    updateLoadMoreButton();
+                    return;
+                }
+
+                end = currentOldestIndex - 1; // The index right before the current oldest
+                start = Math.max(0, end - limit + 1);
+                
+                // --- SCROLL STABILIZATION: RECORD CURRENT STATE ---
+                previousScrollHeight = chatContainer.scrollHeight;
+                previousScrollTop = chatContainer.scrollTop;
+            }
+
+            // 2. Fetch the batch (Ascending order is crucial for correct rendering in column-reverse)
+            // Supabase range is inclusive [start, end]
+            const { data: notes, error: dataError } = await supabaseClient
+                .from(tableName)
+                .select('id, message, created_at') 
+                .order('created_at', { ascending: true }) 
+                .range(start, end); 
+
+            if (dataError) {
+                console.error('Error fetching notes data:', dataError);
+                showMessage(`Error fetching notes data: ${dataError.message}`);
+                isLoading = false;
+                updateLoadMoreButton();
+                return;
+            }
+
+            // 3. Render and update state
+            
+            // Notes are fetched oldest to newest in this batch.
+            // We reverse the array so we insert newest-to-oldest *within the batch*
+            notes.reverse(); 
+
+            // Insert the notes BEFORE the Load More button.
+            // Since the container is column-reverse, this places the newest note of the batch 
+            // adjacent to the currently oldest visible note, maintaining chat order.
+            notes.forEach(note => {
+                chatContainer.insertBefore(createNoteItem(note.message, note.id), loadMoreContainer); 
+            });
+
+            notesLoadedFromEnd += notes.length;
+            
+            // If the starting index was 0, or we've loaded the total count, we've loaded everything.
+            if (start === 0 || notesLoadedFromEnd >= totalNoteCount) {
+                hasMoreNotes = false;
+            }
+
+            if (!isLoadMore) {
+                 // Scroll to bottom for chat view on initial load
+                 chatContainer.scrollTop = chatContainer.scrollHeight; 
+            } else {
+                 // SCROLL STABILIZATION: Adjust scroll position to maintain view
+                 const newScrollHeight = chatContainer.scrollHeight;
+                 const heightDifference = newScrollHeight - previousScrollHeight;
+                 
+                 // Shift scroll position by the amount of new content height
+                 chatContainer.scrollTop = previousScrollTop + heightDifference; 
+            }
+            
+            isLoading = false;
+            updateLoadMoreButton();
+        }
+
+        /** Deletes a note from the Supabase table by ID. */
+        async function deleteNote(id) {
+            if (!isSupabaseReady) {
+                showMessage('Database connection not established.');
+                return;
+            }
+
+            const item = document.querySelector(`.note-bubble[data-id="${id}"]`);
+            if (item) {
+                item.style.opacity = '0';
+                item.style.height = '0';
+                item.style.margin = '0';
+                item.style.padding = '0';
+            }
+
+            const { error } = await supabaseClient
+                .from(tableName)
+                .delete()
+                .eq('id', id);
+
+            if (error) {
+                console.error('Error deleting note:', error);
+                showMessage(`Failed to delete note: ${error.message}`);
+                if (item) { 
+                    item.style.opacity = '1'; 
+                    item.style.height = 'auto';
+                    item.style.margin = '';
+                    item.style.padding = '';
+                }
+                return;
+            }
+
+            console.log(`Note with ID ${id} deleted successfully!`);
+            // Reset load state and reload from the end
+            notesLoadedFromEnd = 0; 
+            loadNotes(false); 
+        }
+
+        /** Inserts a new note. */
+        async function saveNote(rawMessage) {
+            if (!isSupabaseReady) {
+                showMessage('Database connection not established. Please configure Supabase.');
+                return;
+            }
+
+            let chunks = [];
+            // Chunking logic for messages longer than MAX_NOTE_LENGTH
+            for (let i = 0; i < rawMessage.length; i += MAX_NOTE_LENGTH) {
+                chunks.push(rawMessage.substring(i, i + MAX_NOTE_LENGTH));
+            }
+            
+            if (chunks.length > 1) {
+                 showMessage(`Message is too long (${rawMessage.length} chars). Submitting as ${chunks.length} sequential notes...`);
+            }
+
+            let success = true;
+            let lastError = null;
+
+            for (let i = 0; i < chunks.length; i++) {
+                const { error } = await supabaseClient
+                    .from(tableName)
+                    .insert([{ message: chunks[i], attachment: '' }]);
+
+                if (error) {
+                    console.error(`Error saving chunk ${i + 1}:`, error);
+                    lastError = error;
+                    success = false;
+                    break;
+                }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            hideMessage(); 
+
+            if (!success) {
+                showMessage(`Submission Failed: ${lastError.message}`);
+            } else {
+                console.log('Note(s) saved successfully!');
+                // Reset load state and reload to put the new note at the bottom.
+                notesLoadedFromEnd = 0;
+                loadNotes(false); 
+            }
+        }
+        
+        // --- Event Listeners and Initialization ---
+
+        function saveCredentialsAndConnect() {
+            const url = document.getElementById('supabase-url').value.trim();
+            const key = document.getElementById('supabase-anon-key').value.trim();
+            const table = document.getElementById('supabase-table-name').value.trim();
+
+            if (!url || !key || !table) {
+                showMessage('All fields are required to connect to Supabase.');
+                return;
+            }
+
+            try {
+                localStorage.setItem(LS_KEYS.URL, url);
+                localStorage.setItem(LS_KEYS.KEY, key);
+                localStorage.setItem(LS_KEYS.TABLE, table);
+                
+                const success = initializeSupabase(url, key, table);
+                
+                if (success) {
+                    configModal.style.display = 'none';
+                } else {
+                    configModal.style.display = 'flex'; 
+                }
+
+            } catch (e) {
+                console.error('Failed to save to localStorage:', e);
+                showMessage('Failed to save configuration. Please check your browser settings.');
+                configModal.style.display = 'flex'; 
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            getSupabaseCredentials();
+
+            const handleSend = () => {
+                const message = noteInput.value.trim();
+                if (message) {
+                    saveNote(message);
+                    noteInput.value = '';
+                    noteInput.style.height = 'auto';
+                }
+            };
+
+            sendButton.addEventListener('click', handleSend);
+            
+            noteInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { 
+                    e.preventDefault(); 
+                    handleSend();
+                }
+            });
+
+            noteInput.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = (this.scrollHeight) + 'px';
+            });
+
+            saveConfigBtn.addEventListener('click', saveCredentialsAndConnect);
+
+            msgBoxCloseBtn.addEventListener('click', hideMessage);
+            
+            confirmDeleteBtn.addEventListener('click', async () => {
+                if (currentSelectedNote) {
+                    await deleteNote(currentSelectedNote.id);
+                }
+                deleteConfirmModal.style.display = 'none';
+                clearSelection();
+            });
+
+            cancelDeleteBtn.addEventListener('click', () => {
+                deleteConfirmModal.style.display = 'none';
+                clearSelection();
+            });
+        });
+
+    </script>
+</body>
+</html>
