@@ -473,11 +473,24 @@
             deleteConfirmModal.style.display = 'flex';
         }
         
+        function urlToLink(text) {
+            // Regular expression pattern to match URLs (supports http and https)
+            const urlPattern = /https?:\/\/\S+/g;
+            // Function to replace URLs with anchor tags
+            function replaceUrl(match) {
+                const url = match;
+                return `<a href="${url}">${url}</a>`;
+            }
+            // Replace all URLs in the text
+            const htmlText = text.replace(urlPattern, replaceUrl);
+            return htmlText;
+        }
+
         /** Creates a complete note bubble DOM element and attaches gesture listeners. */
         function createNoteItem(message, id) {
             const bubble = document.createElement('div');
             bubble.classList.add('note-bubble');
-            bubble.textContent = message;
+            bubble.textContent = urlToLink(message);
             bubble.dataset.id = id;
             bubble.dataset.isPressed = 'false';
             
