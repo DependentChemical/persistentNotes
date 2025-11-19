@@ -1,4 +1,4 @@
-const CACHE_NAME = 'persistentNotesv1.2';
+const CACHE_NAME = 'persistentNotesv1.4';
 // List the files you want to cache for offline use.
 // ALL paths must be relative to the root of the GitHub Pages site (e.g., /<repository-name>/index.html).
 const urlsToCache = [
@@ -16,6 +16,7 @@ self.addEventListener('install', event => {
         return cache.addAll(urlsToCache);
       })
   );
+  self.skipWaiting();
 });
 
 self.addEventListener('fetch', event => {
@@ -45,4 +46,5 @@ self.addEventListener('activate', event => {
       );
     })
   );
+  self.clients.claim();
 });
